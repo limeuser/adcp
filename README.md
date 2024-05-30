@@ -4,7 +4,6 @@ a database connection pool focused on:
 
 * simplicity
 * high performance
-* observability
 
 ## use in spring
 
@@ -25,6 +24,16 @@ public class SpringDataSourceConfig extends AdcpDataSourceConfig {
 
     public void setUrl(String url) {
         this.url = url;
+    }
+
+    @Override
+    public String getPoolName() {
+        return this.getName();
+    }
+
+    @Override
+    public String setPoolName(String name) {
+        this.setName(name);
     }
 }
 ```

@@ -12,8 +12,6 @@ import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class AdcpPool {
     private final Node idleHead;
@@ -23,7 +21,7 @@ public class AdcpPool {
     private final DataSource dataSource;
     private final AdcpPoolConfig config;
     private final PoolMetric metric;
-    private final Lock lock;
+    private final SpinLock lock;
 
     private final static Logger logger = LoggerFactory.getLogger(AdcpPool.class);
 
@@ -39,7 +37,7 @@ public class AdcpPool {
 
         this.metric = new PoolMetric();
 
-        this.lock = new ReentrantLock();
+        this.lock = new SpinLock();
 
         this.idleHead = new Node();
         this.usingHead = new Node();

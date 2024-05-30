@@ -27,7 +27,7 @@ public class Example {
         ds.close();
     }
 
-    private static AdcpDataSource createByJdbcUrl() throws SQLException {
+    public static AdcpDataSource createByJdbcUrl() throws SQLException {
         String url = "jdbc:postgresql://localhost:5432/mc_dev";
         String username = "modeling";
         String password = "modeling";

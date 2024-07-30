@@ -9,6 +9,7 @@ public class AdcpPoolConfig {
     private int recyclePeriodSeconds = 10;
     private int checkPeriodSeconds = 60;
     private int checkTimeoutSeconds = 10;
+    private int maxLifetimeSeconds = 3 * 60;
     private boolean logMetrics = false;
     private boolean logWarning = true;
     private int logMetricsPeriodSeconds = 60;
@@ -99,5 +100,29 @@ public class AdcpPoolConfig {
 
     public void setLogWarning(boolean logWarning) {
         this.logWarning = logWarning;
+    }
+
+    public int getMaxLifetimeSeconds() {
+        return maxLifetimeSeconds;
+    }
+
+    public void setMaxLifetimeSeconds(int maxLifetimeSeconds) {
+        this.maxLifetimeSeconds = maxLifetimeSeconds;
+    }
+
+    @Override
+    public String toString() {
+        return "\n poolName=" + poolName +
+                "\n maxPoolSize=" + maxPoolSize +
+                "\n minIdle=" + minIdle +
+                "\n connectionTimeoutMs=" + connectionTimeoutMs +
+                "\n idleTimeoutSeconds=" + idleTimeoutSeconds +
+                "\n maxLifetimeSeconds=" + maxLifetimeSeconds +
+                "\n recyclePeriodSeconds=" + recyclePeriodSeconds +
+                "\n checkPeriodSeconds=" + checkPeriodSeconds +
+                "\n checkTimeoutSeconds=" + checkTimeoutSeconds +
+                "\n logMetrics=" + logMetrics +
+                "\n logWarning=" + logWarning +
+                "\n logMetricsPeriodSeconds=" + logMetricsPeriodSeconds;
     }
 }

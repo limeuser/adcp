@@ -29,6 +29,7 @@ public class ProxyConnection implements Connection {
     private String originCatalog;
     private String originSchema;
 
+    private final long createTime;
     private long usingStartTime;
     private long lastUsingTime;
     private boolean isClosed;
@@ -36,6 +37,7 @@ public class ProxyConnection implements Connection {
     public ProxyConnection(Connection connection, Runnable closeHandler) {
         this.connection = connection;
         this.closeHandler = closeHandler;
+        this.createTime = System.currentTimeMillis();
         this.usingStartTime = System.currentTimeMillis();
         this.lastUsingTime = this.usingStartTime;
     }
@@ -70,6 +72,10 @@ public class ProxyConnection implements Connection {
 
     public long getUsingTime() {
         return System.currentTimeMillis() - this.usingStartTime;
+    }
+
+    public long getLiveTime() {
+        return System.currentTimeMillis() - this.createTime;
     }
 
     @Override

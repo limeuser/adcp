@@ -129,6 +129,8 @@ public class AdcpPool {
                 },
                 TimeUnit.SECONDS.toMillis(adcpPoolConfig.getRecyclePeriodSeconds()),
                 TimeUnit.SECONDS.toMillis(adcpPoolConfig.getRecyclePeriodSeconds()));
+
+        logger.info("adcp datasource config:\n{}\nwarning config:\n{}", config, warningConfig);
     }
 
     public void shutdown() {
@@ -196,7 +198,7 @@ public class AdcpPool {
                 }
             } else {
                 if (isInvalid(item.proxyConnection)) {
-                    logger.error("jdbc connection is closed/invalid, try reconnect: {}",
+                    logger.warn("jdbc connection is closed/invalid/lifetime timeout, try reconnect: {}",
                             item.proxyConnection.rawConnection());
                     cleanInvalidConnection(item);
                 } else {
@@ -281,7 +283,8 @@ public class AdcpPool {
         try {
             return connection.rawConnection().isClosed()
                     || (connection.getIdleMs() > config.getCheckPeriodSeconds() * 1000L
-                    && !connection.rawConnection().isValid(config.getCheckTimeoutSeconds()));
+                    && !connection.rawConnection().isValid(config.getCheckTimeoutSeconds()))
+                    || (connection.getLiveTime() >= config.getMaxLifetimeSeconds());
         } catch (SQLException e) {
             logger.error("check jdbc connection is closed/valid exception", e);
             return true;

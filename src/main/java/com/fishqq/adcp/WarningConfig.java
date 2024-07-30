@@ -37,4 +37,12 @@ public class WarningConfig {
     public void setAvgUsingTimeMs(long avgUsingTimeMs) {
         this.avgUsingTimeMs = avgUsingTimeMs;
     }
+
+    @Override
+    public String toString() {
+        return "\navgWaitTimeMs=" + avgWaitTimeMs +
+                "\navgRawConnectionCreateTimeMs=" + avgRawConnectionCreateTimeMs +
+                "\nwaitIdleTimeoutCount=" + waitIdleTimeoutCount +
+                "\navgUsingTimeMs=" + avgUsingTimeMs;
+    }
 }

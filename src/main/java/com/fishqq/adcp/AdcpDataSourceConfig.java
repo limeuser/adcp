@@ -3,18 +3,37 @@ package com.fishqq.adcp;
 import java.util.Properties;
 
 public class AdcpDataSourceConfig extends AdcpPoolConfig {
+    private String jdbcUrl;
+    private String driverClassName;
+    private final WarningConfig warningConfig = new WarningConfig();
     private final Properties driverProperties = new Properties();
 
     Properties getDriverProperties() {
         return driverProperties;
     }
 
-    public void put(String key, Object value) {
+    public void setDriverProperty(String key, Object value) {
         this.driverProperties.put(key, value);
     }
 
-    public Object get(String key) {
+    public Object getDriverProperty(String key) {
         return driverProperties.get(key);
+    }
+
+    public String getDriverClassName() {
+        return driverClassName;
+    }
+
+    public void setDriverClassName(String driverClassName) {
+        this.driverClassName = driverClassName;
+    }
+
+    public String getJdbcUrl() {
+        return jdbcUrl;
+    }
+
+    public void setJdbcUrl(String jdbcUrl) {
+        this.jdbcUrl = jdbcUrl;
     }
 
     public String getUsername() {
@@ -47,5 +66,9 @@ public class AdcpDataSourceConfig extends AdcpPoolConfig {
 
     public void setContinueOnError(boolean continueOnError) {
         driverProperties.put(DriverPropertyKey.continueOnError.name(), continueOnError);
+    }
+
+    public WarningConfig getWarningConfig() {
+        return warningConfig;
     }
 }

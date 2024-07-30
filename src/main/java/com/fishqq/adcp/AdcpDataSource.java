@@ -16,9 +16,9 @@ public class AdcpDataSource implements DataSource, Closeable {
 
     private static final Logger logger = LoggerFactory.getLogger(AdcpDataSource.class);
 
-    public AdcpDataSource(AdcpPoolConfig config, DataSource dataSource) {
+    public AdcpDataSource(AdcpPoolConfig config, WarningConfig warningConfig, DataSource dataSource) {
         logger.info("{} - Starting...", config.getPoolName());
-        this.pool = new AdcpPool(config, dataSource);
+        this.pool = new AdcpPool(config, warningConfig, dataSource);
         logger.info("{} - Start completed.", config.getPoolName());
     }
 

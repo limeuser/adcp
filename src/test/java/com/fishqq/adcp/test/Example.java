@@ -4,6 +4,7 @@ import com.fishqq.adcp.AdcpDataSource;
 import com.fishqq.adcp.AdcpDataSourceConfig;
 import com.fishqq.adcp.AdcpPoolConfig;
 import com.fishqq.adcp.AdcpStaticFactory;
+import com.fishqq.adcp.WarningConfig;
 import org.postgresql.PGProperty;
 import org.postgresql.ds.PGSimpleDataSource;
 
@@ -34,21 +35,27 @@ public class Example {
 
         // config jdbc
         AdcpDataSourceConfig config = new AdcpDataSourceConfig();
+        config.setJdbcUrl(url);
         config.setUsername(username);
         config.setPassword(password);
 
         // config pool
         config.setMaxPoolSize(10);
         config.setMinIdle(2);
+        config.setLogWarning(true);
+        config.setLogMetricsPeriodSeconds(120);
+
+        // metrics warning config
+        config.getWarningConfig().setAvgWaitTimeMs(1000);
 
         // set driver properties
-        config.put(PGProperty.APPLICATION_NAME.getName(), "my-app");
-        config.put(PGProperty.ADAPTIVE_FETCH_MAXIMUM.getName(), 100);
+        config.setDriverProperty(PGProperty.APPLICATION_NAME.getName(), "my-app");
+        config.setDriverProperty(PGProperty.ADAPTIVE_FETCH_MAXIMUM.getName(), 100);
 
-        return AdcpStaticFactory.createDataSource(url, config);
+        return AdcpStaticFactory.createDataSource(config);
     }
 
-    private static AdcpDataSource createByDataSource() throws SQLException {
+    private static AdcpDataSource createByDataSource() {
         PGSimpleDataSource dataSource = new PGSimpleDataSource();
         dataSource.setUser("modeling");
         dataSource.setPassword("modeling");
@@ -57,10 +64,16 @@ public class Example {
 
         dataSource.setApplicationName("my-app");
 
-        AdcpPoolConfig poolConfig = new AdcpPoolConfig();
-        poolConfig.setPoolName("adcp");
-        poolConfig.setMinIdle(2);
+        AdcpPoolConfig config = new AdcpPoolConfig();
 
-        return new AdcpDataSource(poolConfig, dataSource);
+        config.setPoolName("adcp");
+        config.setMinIdle(2);
+        config.setMaxPoolSize(10);
+
+        // metrics warning config
+        config.setLogWarning(true);
+        config.setLogMetricsPeriodSeconds(120);
+
+        return new AdcpDataSource(config, new WarningConfig(), dataSource);
     }
 }

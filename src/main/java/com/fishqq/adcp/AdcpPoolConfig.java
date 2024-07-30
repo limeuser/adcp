@@ -9,6 +9,9 @@ public class AdcpPoolConfig {
     private int recyclePeriodSeconds = 10;
     private int checkPeriodSeconds = 60;
     private int checkTimeoutSeconds = 10;
+    private boolean logMetrics = false;
+    private boolean logWarning = true;
+    private int logMetricsPeriodSeconds = 60;
 
     public String getPoolName() {
         return poolName;
@@ -72,5 +75,29 @@ public class AdcpPoolConfig {
 
     public void setCheckTimeoutSeconds(int checkTimeoutSeconds) {
         this.checkTimeoutSeconds = checkTimeoutSeconds;
+    }
+
+    public boolean getLogMetrics() {
+        return logMetrics;
+    }
+
+    public void setLogMetrics(boolean logMetrics) {
+        this.logMetrics = logMetrics;
+    }
+
+    public int getLogMetricsPeriodSeconds() {
+        return logMetricsPeriodSeconds;
+    }
+
+    public void setLogMetricsPeriodSeconds(int logMetricsPeriodSeconds) {
+        this.logMetricsPeriodSeconds = logMetricsPeriodSeconds;
+    }
+
+    public boolean getLogWarning() {
+        return logWarning;
+    }
+
+    public void setLogWarning(boolean logWarning) {
+        this.logWarning = logWarning;
     }
 }

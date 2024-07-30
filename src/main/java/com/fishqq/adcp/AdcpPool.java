@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.sql.SQLTransientConnectionException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
@@ -31,7 +32,7 @@ public class AdcpPool {
         private ProxyConnection proxyConnection;
     }
 
-    public AdcpPool(AdcpPoolConfig adcpPoolConfig, DataSource dataSource) {
+    public AdcpPool(AdcpPoolConfig adcpPoolConfig, WarningConfig warningConfig, DataSource dataSource) {
         this.config = adcpPoolConfig;
         this.dataSource = dataSource;
 
@@ -61,6 +62,29 @@ public class AdcpPool {
         nodes.get(nodes.size() - 1).prev = prev;
 
         Timer timer = new Timer("connection-recycle", true);
+
+        if (config.getLogMetrics() || config.getLogWarning()) {
+            timer.schedule(
+                    new TimerTask() {
+                        @Override
+                        public void run() {
+                            if (config.getLogMetrics()) {
+                                logger.info("metrics:\n {}", metric);
+                            }
+                            if (config.getLogWarning()) {
+                                Optional<String> warning = metric.getWarning(warningConfig);
+                                warning.ifPresent(logger::warn);
+                            }
+
+                            lock.lock();
+                            metric.reset();
+                            lock.unlock();
+                        }
+                    },
+                    TimeUnit.SECONDS.toMillis(config.getLogMetricsPeriodSeconds()),
+                    TimeUnit.SECONDS.toMillis(config.getLogMetricsPeriodSeconds()));
+        }
+
         timer.schedule(
                 new TimerTask() {
                     @Override
@@ -75,19 +99,22 @@ public class AdcpPool {
 
                         try {
                             int recycleCount = 0;
+                            long timeoutMs = config.getIdleTimeoutSeconds() * 1000L;
                             int maxRecycleConnections = metric.getIdleConnections() - adcpPoolConfig.getMinIdle();
 
                             Node idle = idleHead.next;
+                            while (idle != null && recycleCount < maxRecycleConnections) {
+                                if (idle.proxyConnection.getIdleMs() >= timeoutMs) {
+                                    closingConnections.add(idle.proxyConnection.rawConnection());
+                                    idle.proxyConnection = null;
 
-                            long timeoutMs = config.getIdleTimeoutSeconds() * 1000L;
-                            while (idle != null
-                                    && recycleCount < maxRecycleConnections
-                                    && idle.proxyConnection.getIdleMs() >= timeoutMs) {
-                                closingConnections.add(idle.proxyConnection.rawConnection());
-                                idle.proxyConnection = null;
-                                moveNode(idle, emptyHead);
-                                idle = idle.next;
-                                ++recycleCount;
+                                    Node removing = idle;
+                                    idle = idle.next;
+                                    moveNode(removing, emptyHead);
+                                    ++recycleCount;
+                                } else {
+                                    idle = idle.next;
+                                }
                             }
 
                             metric.recordRecycle(closingConnections.size());
@@ -146,9 +173,11 @@ public class AdcpPool {
     }
 
     public ProxyConnection borrow(long timeout) throws SQLException {
+        long spendMs;
         long waitMs = timeout / 10;
-        long spendMs = 0;
         long startTime = System.currentTimeMillis();
+
+        metric.recordBorrowStart();
 
         while (true) {
             Node item = tryBorrowFromIdle();
@@ -159,32 +188,31 @@ public class AdcpPool {
                 if (emptyHead.next == null) {
                     waitForEmptyNode(waitMs);
                 } else {
-                    // if timeout, itemCreator should throw timeout exception
                     Node node = createFromRawConnection();
                     if (node != null) {
+                        metric.recordBorrowEnd();
                         return node.proxyConnection;
                     }
                 }
             } else {
-                try {
-                    if (isInvalid(item.proxyConnection)) {
-                        logger.error("jdbc connection is closed by server: {}", item.proxyConnection.rawConnection());
-                        cleanInvalidConnection(item, false);
-                    } else {
-                        return item.proxyConnection;
-                    }
-                } catch (SQLException e) {
-                    logger.error("check jdbc connection error: " + item.proxyConnection.rawConnection(), e);
-                    cleanInvalidConnection(item, true);
+                if (isInvalid(item.proxyConnection)) {
+                    logger.error("jdbc connection is closed/invalid, try reconnect: {}",
+                            item.proxyConnection.rawConnection());
+                    cleanInvalidConnection(item);
+                } else {
+                    item.proxyConnection.initStatus();
+                    metric.recordBorrowEnd();
+                    return item.proxyConnection;
                 }
             }
 
             spendMs = System.currentTimeMillis() - startTime;
             if (spendMs > timeout) {
+                metric.recordBorrowEnd();
                 metric.recordTimeout();
 
                 throw new SQLTransientConnectionException(String.format(
-                        "try get connection from pool timeout: after %d ms, %d connection",
+                        "try get connection from pool timeout: after %d ms, max pool size: %d",
                         timeout,
                         config.getMaxPoolSize()));
             }
@@ -192,9 +220,12 @@ public class AdcpPool {
     }
 
     private Node createFromRawConnection() throws SQLException {
+        long start = System.currentTimeMillis();
         Connection connection = dataSource.getConnection();
 
         lock.lock();
+
+        metric.recordCreateConnection(System.currentTimeMillis() - start);
 
         Node usingNode = moveNode(emptyHead.next, usingHead);
 
@@ -213,9 +244,9 @@ public class AdcpPool {
 
             return null;
         } else {
-            metric.recordCreateConnection();
-
             usingNode.proxyConnection = new ProxyConnection(connection, () -> recycleAfterClosed(usingNode));
+
+            metric.recordUsingNewConnection();
 
             lock.unlock();
 
@@ -226,17 +257,14 @@ public class AdcpPool {
     private void waitForEmptyNode(long waitMs) {
         try {
             Thread.sleep(waitMs);
-            this.metric.recordWaitConnection();
+            this.metric.recordWaitConnection(waitMs);
         } catch (InterruptedException e) {
             logger.error("pool get connection sleep is interrupted", e);
         }
     }
 
-    private void cleanInvalidConnection(Node item, boolean close) {
-        if (close) {
-            closeJdbcConnection(item.proxyConnection.rawConnection());
-        }
-
+    private void cleanInvalidConnection(Node item) {
+        closeJdbcConnection(item.proxyConnection.rawConnection());
         this.lockAndMoveNode(item, this.emptyHead);
         metric.recordBadConnection();
     }
@@ -249,10 +277,15 @@ public class AdcpPool {
         }
     }
 
-    private boolean isInvalid(ProxyConnection connection) throws SQLException {
-        return connection.rawConnection().isClosed()
-                || (connection.getIdleMs() > config.getCheckPeriodSeconds() * 1000L
-                && !connection.rawConnection().isValid(config.getCheckTimeoutSeconds()));
+    private boolean isInvalid(ProxyConnection connection) {
+        try {
+            return connection.rawConnection().isClosed()
+                    || (connection.getIdleMs() > config.getCheckPeriodSeconds() * 1000L
+                    && !connection.rawConnection().isValid(config.getCheckTimeoutSeconds()));
+        } catch (SQLException e) {
+            logger.error("check jdbc connection is closed/valid exception", e);
+            return true;
+        }
     }
 
     private Node tryBorrowFromIdle() {
@@ -272,9 +305,11 @@ public class AdcpPool {
     private void recycleAfterClosed(Node usingNode) {
         lock.lock();
 
+        ProxyConnection proxyConnection = usingNode.proxyConnection;
+
         moveNode(usingNode, idleHead);
 
-        metric.recordClosing();
+        metric.recordClosing(proxyConnection.getUsingTime());
 
         lock.unlock();
     }

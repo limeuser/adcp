@@ -21,13 +21,14 @@ public class Benchmark {
     }
 
     public static void threads() throws Exception {
-        DataSource ds = createHikari();
+        DataSource ds = createDataSource();
 
-        int size = 300;
+        int size = 120;
         List<Thread> threads = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             Thread thread = new Thread(() -> query(ds), "biz-" + i);
             thread.setDaemon(true);
+            Thread.sleep(new Random().nextInt(1000));
             thread.start();
             threads.add(thread);
         }
@@ -65,18 +66,23 @@ public class Benchmark {
 
         // config jdbc
         AdcpDataSourceConfig config = new AdcpDataSourceConfig();
+        config.setJdbcUrl(url);
         config.setUsername(username);
         config.setPassword(password);
 
         config.setPoolName("adcp");
         config.setMinIdle(2);
-        config.setMaxPoolSize(100);
+        config.setMaxPoolSize(50);
+        config.setLogMetrics(true);
+        config.setLogWarning(true);
+        config.setLogMetricsPeriodSeconds(60);
+        config.getWarningConfig().setAvgWaitTimeMs(10);
 
         // set driver properties
-        config.put(PGProperty.APPLICATION_NAME.getName(), "my-app");
-        config.put(PGProperty.ADAPTIVE_FETCH_MAXIMUM.getName(), 100);
+        config.setDriverProperty(PGProperty.APPLICATION_NAME.getName(), "my-app");
+        config.setDriverProperty(PGProperty.ADAPTIVE_FETCH_MAXIMUM.getName(), 100);
 
-        return AdcpStaticFactory.createDataSource(url, config);
+        return AdcpStaticFactory.createDataSource(config);
     }
 
     public static DataSource createHikari() {

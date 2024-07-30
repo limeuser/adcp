@@ -11,25 +11,32 @@ import java.util.Enumeration;
 public class AdcpStaticFactory {
     private static final Logger logger = LoggerFactory.getLogger(AdcpStaticFactory.class);
 
-    public static AdcpDataSource createDataSource(String jdbcUrl, AdcpDataSourceConfig config) throws SQLException {
-        Driver driver = DriverManager.getDriver(jdbcUrl);
-        return createDataSource(jdbcUrl, driver, config);
-    }
+    public static AdcpDataSource createDataSource(AdcpDataSourceConfig config) throws SQLException {
+        Driver driver;
 
-    public static AdcpDataSource createDataSource(String jdbcUrl,
-                                                  String driverClassName,
-                                                  AdcpDataSourceConfig config) throws SQLException {
-        Driver driver = getDriverByClassName(driverClassName);
-        if (!driver.acceptsURL(jdbcUrl)) {
-            throw new RuntimeException("Driver " + driverClassName + " claims to not accept jdbcUrl, " + jdbcUrl);
+        if (config.getDriverClassName() != null) {
+            driver = getDriverByClassName(config.getDriverClassName());
+        } else {
+            driver = DriverManager.getDriver(config.getJdbcUrl());
         }
 
-        return createDataSource(jdbcUrl, driver, config);
+        if (!driver.acceptsURL(config.getJdbcUrl())) {
+            throw new RuntimeException("Driver " +
+                    driver.getClass().getName() +
+                    " claims to not accept jdbcUrl, " +
+                    config.getJdbcUrl());
+        }
+
+        return createDataSource(driver, config);
     }
 
-    public static AdcpDataSource createDataSource(String jdbcUrl, Driver driver, AdcpDataSourceConfig config) {
-        DriverDataSource driverDataSource = new DriverDataSource(driver, jdbcUrl, config.getDriverProperties());
-        return new AdcpDataSource(config, driverDataSource);
+    public static AdcpDataSource createDataSource(Driver driver, AdcpDataSourceConfig config) {
+        DriverDataSource driverDataSource = new DriverDataSource(
+                driver,
+                config.getJdbcUrl(),
+                config.getDriverProperties());
+
+        return new AdcpDataSource(config, config.getWarningConfig(), driverDataSource);
     }
 
     public static Driver getDriverByClassName(String driverClassName) throws SQLException {

@@ -1,6 +1,20 @@
 package com.fishqq.adcp;
 
-import java.sql.*;
+import java.sql.Array;
+import java.sql.Blob;
+import java.sql.CallableStatement;
+import java.sql.Clob;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.NClob;
+import java.sql.PreparedStatement;
+import java.sql.SQLClientInfoException;
+import java.sql.SQLException;
+import java.sql.SQLWarning;
+import java.sql.SQLXML;
+import java.sql.Savepoint;
+import java.sql.Statement;
+import java.sql.Struct;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
@@ -15,16 +29,20 @@ public class ProxyConnection implements Connection {
     private String originCatalog;
     private String originSchema;
 
+    private long usingStartTime;
     private long lastUsingTime;
     private boolean isClosed;
 
     public ProxyConnection(Connection connection, Runnable closeHandler) {
         this.connection = connection;
         this.closeHandler = closeHandler;
-        this.lastUsingTime = System.currentTimeMillis();
+        this.usingStartTime = System.currentTimeMillis();
+        this.lastUsingTime = this.usingStartTime;
     }
 
-    void resetStatus() throws SQLException {
+    void initStatus() throws SQLException {
+        this.usingStartTime = System.currentTimeMillis();
+
         if (this.originAutoCommit != null) {
             this.connection.setAutoCommit(originAutoCommit);
         }
@@ -48,6 +66,10 @@ public class ProxyConnection implements Connection {
 
     public long getIdleMs() {
         return System.currentTimeMillis() - this.lastUsingTime;
+    }
+
+    public long getUsingTime() {
+        return System.currentTimeMillis() - this.usingStartTime;
     }
 
     @Override

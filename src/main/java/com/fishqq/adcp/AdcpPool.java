@@ -129,8 +129,6 @@ public class AdcpPool {
                 },
                 TimeUnit.SECONDS.toMillis(adcpPoolConfig.getRecyclePeriodSeconds()),
                 TimeUnit.SECONDS.toMillis(adcpPoolConfig.getRecyclePeriodSeconds()));
-
-        logger.info("adcp datasource config:\n{}\nwarning config:\n{}", config, warningConfig);
     }
 
     public void shutdown() {

@@ -40,7 +40,7 @@ public class WarningConfig {
 
     @Override
     public String toString() {
-        return "\navgWaitTimeMs=" + avgWaitTimeMs +
+        return "avgWaitTimeMs=" + avgWaitTimeMs +
                 "\navgRawConnectionCreateTimeMs=" + avgRawConnectionCreateTimeMs +
                 "\nwaitIdleTimeoutCount=" + waitIdleTimeoutCount +
                 "\navgUsingTimeMs=" + avgUsingTimeMs;

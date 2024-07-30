@@ -112,17 +112,17 @@ public class AdcpPoolConfig {
 
     @Override
     public String toString() {
-        return "\n poolName=" + poolName +
-                "\n maxPoolSize=" + maxPoolSize +
-                "\n minIdle=" + minIdle +
-                "\n connectionTimeoutMs=" + connectionTimeoutMs +
-                "\n idleTimeoutSeconds=" + idleTimeoutSeconds +
-                "\n maxLifetimeSeconds=" + maxLifetimeSeconds +
-                "\n recyclePeriodSeconds=" + recyclePeriodSeconds +
-                "\n checkPeriodSeconds=" + checkPeriodSeconds +
-                "\n checkTimeoutSeconds=" + checkTimeoutSeconds +
-                "\n logMetrics=" + logMetrics +
-                "\n logWarning=" + logWarning +
-                "\n logMetricsPeriodSeconds=" + logMetricsPeriodSeconds;
+        return "poolName=" + poolName +
+                "\nmaxPoolSize=" + maxPoolSize +
+                "\nminIdle=" + minIdle +
+                "\nconnectionTimeoutMs=" + connectionTimeoutMs +
+                "\nidleTimeoutSeconds=" + idleTimeoutSeconds +
+                "\nmaxLifetimeSeconds=" + maxLifetimeSeconds +
+                "\nrecyclePeriodSeconds=" + recyclePeriodSeconds +
+                "\ncheckPeriodSeconds=" + checkPeriodSeconds +
+                "\ncheckTimeoutSeconds=" + checkTimeoutSeconds +
+                "\nlogMetrics=" + logMetrics +
+                "\nlogWarning=" + logWarning +
+                "\nlogMetricsPeriodSeconds=" + logMetricsPeriodSeconds;
     }
 }

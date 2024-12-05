@@ -17,9 +17,17 @@ public class AdcpDataSource implements DataSource, Closeable {
     private static final Logger logger = LoggerFactory.getLogger(AdcpDataSource.class);
 
     public AdcpDataSource(AdcpPoolConfig config, DataSource dataSource) {
+        this(config, dataSource, new AdcpMemoryMonitor());
+    }
+
+    public AdcpDataSource(AdcpPoolConfig config, DataSource dataSource, AdcpMonitor monitor) {
         logger.info("{} - Starting...\n{}", config.getPoolName(), config);
-        this.pool = new AdcpPool(config, dataSource);
+        this.pool = new AdcpPool(config, dataSource, monitor);
         logger.info("{} - Start completed.", config.getPoolName());
+    }
+
+    public AdcpMetrics getMetrics() {
+        return pool;
     }
 
     /**
@@ -39,7 +47,7 @@ public class AdcpDataSource implements DataSource, Closeable {
      */
     @Override
     public Connection getConnection(String username, String password) throws SQLException {
-        throw new SQLFeatureNotSupportedException();
+        throw new SQLFeatureNotSupportedException("adcp datasource don't support to get connection with username and password");
     }
 
     /**
@@ -47,8 +55,7 @@ public class AdcpDataSource implements DataSource, Closeable {
      */
     @Override
     public PrintWriter getLogWriter() throws SQLException {
-        AdcpPool p = pool;
-        return (p != null ? p.getUnwrappedDataSource().getLogWriter() : null);
+        return pool.getUnwrappedDataSource().getLogWriter();
     }
 
     /**
@@ -56,10 +63,7 @@ public class AdcpDataSource implements DataSource, Closeable {
      */
     @Override
     public void setLogWriter(PrintWriter out) throws SQLException {
-        AdcpPool p = pool;
-        if (p != null) {
-            p.getUnwrappedDataSource().setLogWriter(out);
-        }
+        pool.getUnwrappedDataSource().setLogWriter(out);
     }
 
     /**
@@ -67,10 +71,7 @@ public class AdcpDataSource implements DataSource, Closeable {
      */
     @Override
     public void setLoginTimeout(int seconds) throws SQLException {
-        AdcpPool p = pool;
-        if (p != null) {
-            p.getUnwrappedDataSource().setLoginTimeout(seconds);
-        }
+        pool.getUnwrappedDataSource().setLoginTimeout(seconds);
     }
 
     /**
@@ -78,8 +79,7 @@ public class AdcpDataSource implements DataSource, Closeable {
      */
     @Override
     public int getLoginTimeout() throws SQLException {
-        AdcpPool p = pool;
-        return (p != null ? p.getUnwrappedDataSource().getLoginTimeout() : 0);
+        return pool.getUnwrappedDataSource().getLoginTimeout();
     }
 
     /**
@@ -87,7 +87,7 @@ public class AdcpDataSource implements DataSource, Closeable {
      */
     @Override
     public java.util.logging.Logger getParentLogger() throws SQLFeatureNotSupportedException {
-        throw new SQLFeatureNotSupportedException();
+        throw new SQLFeatureNotSupportedException("adcp datasource don't support to getParentLogger");
     }
 
     /**
@@ -100,16 +100,13 @@ public class AdcpDataSource implements DataSource, Closeable {
             return (T) this;
         }
 
-        AdcpPool p = pool;
-        if (p != null) {
-            final DataSource unwrappedDataSource = p.getUnwrappedDataSource();
-            if (iface.isInstance(unwrappedDataSource)) {
-                return (T) unwrappedDataSource;
-            }
+        DataSource unwrappedDataSource = pool.getUnwrappedDataSource();
+        if (iface.isInstance(unwrappedDataSource)) {
+            return (T) unwrappedDataSource;
+        }
 
-            if (unwrappedDataSource != null) {
-                return unwrappedDataSource.unwrap(iface);
-            }
+        if (unwrappedDataSource != null) {
+            return unwrappedDataSource.unwrap(iface);
         }
 
         throw new SQLException("Wrapped DataSource is not an instance of " + iface);
@@ -124,16 +121,13 @@ public class AdcpDataSource implements DataSource, Closeable {
             return true;
         }
 
-        AdcpPool p = pool;
-        if (p != null) {
-            final DataSource unwrappedDataSource = p.getUnwrappedDataSource();
-            if (iface.isInstance(unwrappedDataSource)) {
-                return true;
-            }
+        DataSource unwrappedDataSource = pool.getUnwrappedDataSource();
+        if (iface.isInstance(unwrappedDataSource)) {
+            return true;
+        }
 
-            if (unwrappedDataSource != null) {
-                return unwrappedDataSource.isWrapperFor(iface);
-            }
+        if (unwrappedDataSource != null) {
+            return unwrappedDataSource.isWrapperFor(iface);
         }
 
         return false;

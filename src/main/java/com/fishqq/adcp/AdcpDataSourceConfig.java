@@ -9,7 +9,7 @@ public class AdcpDataSourceConfig extends AdcpPoolConfig {
         return driverProperties;
     }
 
-    public void put(String key, Object value) {
+    public void setDriverProperty(String key, Object value) {
         this.driverProperties.put(key, value);
     }
 

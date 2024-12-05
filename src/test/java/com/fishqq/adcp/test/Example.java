@@ -42,8 +42,8 @@ public class Example {
         config.setMinIdle(2);
 
         // set driver properties
-        config.put(PGProperty.APPLICATION_NAME.getName(), "my-app");
-        config.put(PGProperty.ADAPTIVE_FETCH_MAXIMUM.getName(), 100);
+        config.setDriverProperty(PGProperty.APPLICATION_NAME.getName(), "my-app");
+        config.setDriverProperty(PGProperty.ADAPTIVE_FETCH_MAXIMUM.getName(), 100);
 
         return AdcpStaticFactory.createDataSource(url, config);
     }

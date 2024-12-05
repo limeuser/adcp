@@ -3,7 +3,6 @@ package com.fishqq.adcp;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SpinLock {
-    private volatile Thread thread;
     private final AtomicBoolean state = new AtomicBoolean(false);
 
     public void lock() {
@@ -12,7 +11,6 @@ public class SpinLock {
             }
 
             if (!state.getAndSet(true)) {
-                thread = Thread.currentThread();
                 return;
             }
         }
@@ -20,6 +18,5 @@ public class SpinLock {
 
     public void unlock() {
         state.set(false);
-        thread = null;
     }
 }

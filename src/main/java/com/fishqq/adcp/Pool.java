@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -14,7 +15,7 @@ public class Pool<E> {
     private final Node activeHead;
     private final Node emptyHead;
 
-    private final ReentrantLock idleAndEmptyLock = new ReentrantLock();
+    private final Lock idleAndEmptyLock = new ReentrantLock();
     private final Condition noIdleOrEmptyNodeCondition = idleAndEmptyLock.newCondition();
 
     private final SpinLock activeLock = new SpinLock();
@@ -30,7 +31,7 @@ public class Pool<E> {
 
     public enum NodeType {
         IDLE,
-        EMPTY;
+        EMPTY
     }
 
     public Pool(int capacity) {
@@ -184,7 +185,7 @@ public class Pool<E> {
         }
     }
 
-    public Pair<NodeType, Node> tryTakeIdleOrEmptyNode(long timeoutMs) {
+    public Pair<NodeType, Node> tryTakeIdleOrEmptyNode(long timeoutMs, Consumer<Long> waitHandler) {
         long nanos = TimeUnit.MICROSECONDS.toNanos(timeoutMs);
 
         idleAndEmptyLock.lock();
@@ -196,7 +197,9 @@ public class Pool<E> {
             }
 
             try {
-                nanos = noIdleOrEmptyNodeCondition.awaitNanos(nanos);
+                long remaining = noIdleOrEmptyNodeCondition.awaitNanos(nanos);
+                waitHandler.accept(nanos - remaining);
+                nanos = remaining;
             } catch (Throwable e) {
                 // just return and retry
                 idleAndEmptyLock.unlock();

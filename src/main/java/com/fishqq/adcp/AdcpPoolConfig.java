@@ -5,12 +5,12 @@ public class AdcpPoolConfig {
     private int maxPoolSize = 32;
     private int minIdle = 2;
     private long borrowTimeoutMs = 30 * 1000;
-    private int idleTimeoutSeconds = 10;
-    private int recyclePeriodSeconds = 10;
-    private int checkTimeoutSeconds = 10;
-    private boolean validateConnection = false;
+    private int idleTimeoutSeconds = 180;
+    private int recyclePeriodSeconds = 60;
+    private int checkValidationTimeoutSeconds = 10;
+    private long aliveCheckPeriodMs = 500;
     private int maxLifetimeSeconds = 15 * 60;
-    private int warnActiveTimeSeconds = 10;
+    private int leakDetectionThresholdSeconds = 60;
 
     public String getPoolName() {
         return poolName;
@@ -60,20 +60,20 @@ public class AdcpPoolConfig {
         this.recyclePeriodSeconds = recyclePeriodSeconds;
     }
 
-    public boolean getValidateConnection() {
-        return validateConnection;
+    public long getAliveCheckPeriodMs() {
+        return aliveCheckPeriodMs;
     }
 
-    public void setValidateConnection(boolean validateConnection) {
-        this.validateConnection = validateConnection;
+    public void setAliveCheckPeriodMs(long aliveCheckPeriodMs) {
+        this.aliveCheckPeriodMs = aliveCheckPeriodMs;
     }
 
-    public int getCheckTimeoutSeconds() {
-        return checkTimeoutSeconds;
+    public int getCheckValidationTimeoutSeconds() {
+        return checkValidationTimeoutSeconds;
     }
 
-    public void setCheckTimeoutSeconds(int checkTimeoutSeconds) {
-        this.checkTimeoutSeconds = checkTimeoutSeconds;
+    public void setCheckValidationTimeoutSeconds(int checkValidationTimeoutSeconds) {
+        this.checkValidationTimeoutSeconds = checkValidationTimeoutSeconds;
     }
 
     public int getMaxLifetimeSeconds() {
@@ -84,12 +84,12 @@ public class AdcpPoolConfig {
         this.maxLifetimeSeconds = maxLifetimeSeconds;
     }
 
-    public int getWarnActiveTimeSeconds() {
-        return warnActiveTimeSeconds;
+    public int getLeakDetectionThresholdSeconds() {
+        return leakDetectionThresholdSeconds;
     }
 
-    public void setWarnActiveTimeSeconds(int warnActiveTimeSeconds) {
-        this.warnActiveTimeSeconds = warnActiveTimeSeconds;
+    public void setLeakDetectionThresholdSeconds(int leakDetectionThresholdSeconds) {
+        this.leakDetectionThresholdSeconds = leakDetectionThresholdSeconds;
     }
 
     @Override
@@ -101,9 +101,9 @@ public class AdcpPoolConfig {
                 ", borrowTimeoutMs=" + borrowTimeoutMs +
                 ", idleTimeoutSeconds=" + idleTimeoutSeconds +
                 ", recyclePeriodSeconds=" + recyclePeriodSeconds +
-                ", validateConnection=" + validateConnection +
-                ", checkTimeoutSeconds=" + checkTimeoutSeconds +
-                ", warnActiveTimeSecondgs=" + warnActiveTimeSeconds +
+                ", aliveCheckPeriodMs=" + aliveCheckPeriodMs +
+                ", checkValidationTimeoutSeconds=" + checkValidationTimeoutSeconds +
+                ", leakDetectionThresholdSeconds=" + leakDetectionThresholdSeconds +
                 ", maxLifetimeSeconds=" + maxLifetimeSeconds +
                 '}';
     }

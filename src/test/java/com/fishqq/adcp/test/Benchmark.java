@@ -34,22 +34,21 @@ public class Benchmark {
 
     private long acquireConnection(DataSource ds, long count) {
         try {
-            try (Connection connection = ds.getConnection()) {
-
-            }
-
             long start = System.currentTimeMillis();
 
+            logger.info("thread {} start", Thread.currentThread().getName());
+
+            int j = 0;
             for (int i = 0; i < count; i++) {
                 try (Connection connection = ds.getConnection()) {
-
+                    j++;
                 }
             }
 
             long spend = System.currentTimeMillis() - start;
             logger.info("thread {} spend {}", Thread.currentThread().getName(), spend);
             return spend;
-        } catch (SQLException e) {
+        } catch (Throwable e) {
             logger.error("error", e);
             throw new RuntimeException(e);
         }
@@ -57,11 +56,11 @@ public class Benchmark {
 
     @Test
     public void multiThreads() throws Exception {
-        int threadCount = 100;
-        int count = 1000000;
+        int threadCount = 4;
+        int count = 100000000;
 
-        logger.info("adcp spend: {}", multiThreads(threadCount, createAdcpDataSource(), count));
 //        logger.info("hikari spend: {}", multiThreads(threadCount, createHikariDataSource(), count));
+        logger.info("adcp spend: {}", multiThreads(threadCount, createAdcpDataSource(), count));
     }
 
     public long multiThreads(int threadCount, DataSource ds, int count) throws Exception {

@@ -46,3 +46,7 @@ public DataSource dataSource(@Autowired SpringDataSourceConfig springDataSourceC
         return AdcpStaticFactory.createDataSource(springDataSourceConfig.getUrl(),springDataSourceConfig);
         }
 ```
+
+* lock
+* using nodeLock to protect empty node list and using node list
+* using connection lock to operate isClosed and threadConnectionMap atomically

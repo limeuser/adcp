@@ -18,18 +18,19 @@ import java.sql.Struct;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 public class ProxyConnection implements Connection {
     private final long id;
-    private Connection connection;
-    private Runnable closeHandler;
+    private final Connection connection;
+    private final Consumer<ProxyConnection> closeHandler;
 
-    private boolean isClosed;
+    private final AtomicBoolean isClosed;
 
-    private long createdAt;
+    private final long createdAt;
     private long lastUsingTime;
     private long startUsingTime;
-    private Thread usingThread;
 
     private Boolean originAutoCommit;
     private Boolean originReadOnly;
@@ -37,50 +38,36 @@ public class ProxyConnection implements Connection {
     private String originCatalog;
     private String originSchema;
 
-    public ProxyConnection(long id, Thread usingThread, Connection connection, Runnable closeHandler) {
+    public ProxyConnection(long id, Connection connection, Consumer<ProxyConnection> closeHandler) {
         this.id = id;
         this.connection = connection;
         this.closeHandler = closeHandler;
         this.createdAt = System.currentTimeMillis();
         this.lastUsingTime = this.createdAt;
         this.startUsingTime = this.createdAt;
-        this.usingThread = usingThread;
+        this.isClosed = new AtomicBoolean(false);
     }
 
-    public void reset() {
-        this.connection = null;
-        this.closeHandler = null;
-
-        this.originAutoCommit = null;
-        this.originReadOnly = null;
-        this.originIsolationLevel = null;
-        this.originCatalog = null;
-        this.originSchema = null;
+    public Connection getRawConnection() {
+        return this.connection;
     }
 
-    public void useNewRawConnection(Thread usingThread, Connection connection, Runnable closeHandler) {
-        this.connection = connection;
-        this.closeHandler = closeHandler;
-
-        this.isClosed = false;
-
-        this.createdAt = System.currentTimeMillis();
-        this.lastUsingTime = this.createdAt;
-        this.startUsingTime = this.createdAt;
-        this.usingThread = usingThread;
+    public boolean tryUse() {
+        boolean r = this.isClosed.compareAndSet(true, false);
+        if (r) {
+            this.startUsingTime = System.currentTimeMillis();
+        }
+        return r;
     }
 
-    public void setUsingBy(Thread thread) {
-        this.usingThread = thread;
-        this.startUsingTime = System.currentTimeMillis();
-    }
+    @Override
+    public final void close() throws SQLException {
+        this.closeHandler.accept(this);
 
-    public Thread getUsingThread() {
-        return this.usingThread;
-    }
+        this.isClosed.set(true);
+        this.lastUsingTime = System.currentTimeMillis();
 
-    public long getStartUsingTime() {
-        return this.startUsingTime;
+        this.resetStatus();
     }
 
     public long getUsedTime() {
@@ -118,17 +105,8 @@ public class ProxyConnection implements Connection {
     }
 
     @Override
-    public final void close() throws SQLException {
-        this.isClosed = true;
-        this.lastUsingTime = System.currentTimeMillis();
-
-        this.closeHandler.run();
-        this.resetStatus();
-    }
-
-    @Override
     public boolean isClosed() {
-        return this.isClosed;
+        return this.isClosed.get();
     }
 
     /**

@@ -1,279 +1,183 @@
 package com.fishqq.adcp;
 
-import java.util.ArrayList;
+import java.sql.Connection;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-public class Pool<E> {
-    private final Node idleHead;
-    private final Node activeHead;
-    private final Node emptyHead;
+final class Pool {
+    private final int max;
+    private final Lock fullLock = new ReentrantLock();
+    private final Condition fullCondition = fullLock.newCondition();
 
-    private final Lock idleAndEmptyLock = new ReentrantLock();
-    private final Condition noIdleOrEmptyNodeCondition = idleAndEmptyLock.newCondition();
+    private final AtomicInteger idleCount;
+    private final AtomicInteger activeCount;
+    private final AtomicInteger totalCount;
 
-    private final SpinLock activeLock = new SpinLock();
+    private final ReadWriteLock poolListLock = new ReentrantReadWriteLock();
+    private final List<ThreadLocalPool> localPools = new LinkedList<>();
+    private final ThreadLocal<ThreadLocalPool> poolThreadLocal = ThreadLocal.withInitial(() -> {
+        ThreadLocalPool pool = new ThreadLocalPool();
+        poolListLock.writeLock().lock();
+        localPools.add(pool);
+        poolListLock.writeLock().unlock();
+        return pool;
+    });
 
-    private int idleCount;
-    private int activeCount;
-
-    public final class Node {
-        Node next;
-        Node prev;
-        E item;
+    Pool(int max) {
+        this.max = max;
+        this.idleCount = new AtomicInteger(0);
+        this.activeCount = new AtomicInteger(0);
+        this.totalCount = new AtomicInteger(0);
     }
 
-    public enum NodeType {
-        IDLE,
-        EMPTY
+    int idleCount() {
+        return idleCount.get();
     }
 
-    public Pool(int capacity) {
-        this.idleHead = new Node();
-        this.activeHead = new Node();
-        this.emptyHead = new Node();
+    int activeCount() {
+        return activeCount.get();
+    }
 
-        List<Node> nodes = new ArrayList<>(capacity);
-        for (int i = 0; i < capacity; i++) {
-            nodes.add(new Node());
+    Node borrow() {
+        ThreadLocalPool currentThreadPool = poolThreadLocal.get();
+
+        if (idleCount.get() > 0) {
+            Node local = currentThreadPool.tryTake();
+            if (local != null) {
+                idleCount.decrementAndGet();
+                activeCount.incrementAndGet();
+                return local;
+            }
         }
 
-        this.emptyHead.next = nodes.get(0);
-        Node prev = this.emptyHead;
+        if (idleCount.get() > 0) {
+            poolListLock.readLock().lock();
 
-        for (int i = 0; i < capacity - 1; i++) {
-            Node current = nodes.get(i);
-            current.next = nodes.get(i + 1);
-            current.prev = prev;
-            prev = current;
+            for (ThreadLocalPool pool : localPools) {
+                if (pool != currentThreadPool) {
+                    Node stolen = pool.trySteal();
+                    if (stolen != null) {
+                        poolListLock.readLock().unlock();
+                        idleCount.decrementAndGet();
+                        activeCount.incrementAndGet();
+                        currentThreadPool.addStolenConnection(stolen);
+                        return stolen;
+                    }
+                }
+            }
+
+            poolListLock.readLock().unlock();
         }
 
-        nodes.get(nodes.size() - 1).prev = prev;
+        return null;
     }
 
-    public int idleCount() {
-        return idleCount;
-    }
+    boolean tryAddConnection(long timeoutMs, Consumer<Long> waitHandler) {
+        long nanosTimeout = timeoutMs * 1000;
 
-    public int activeCount() {
-        return activeCount;
-    }
-
-    public void recycleIdleItems(Consumer<E> recycleHandler, Predicate<E> needRecycle, Supplier<Boolean> needStop) {
-        idleAndEmptyLock.lock();
+        fullLock.lock();
 
         try {
-            Node node = idleHead.next;
+            while (totalCount.get() == max) {
+                try {
+                    long remaining = fullCondition.awaitNanos(nanosTimeout);
+                    if (remaining <= 0) {
+                        // timeout
+                        waitHandler.accept(nanosTimeout - remaining);
+                        return false;
+                    }
 
-            while (node != null) {
+                    waitHandler.accept(nanosTimeout - remaining);
+                    nanosTimeout = remaining;
+                } catch (InterruptedException e) {
+                    return false;
+                }
+            }
+
+            totalCount.incrementAndGet();
+
+            return true;
+        } finally {
+            fullLock.unlock();
+        }
+    }
+
+    void failedAddConnection() {
+        decrementTotalCountAndNotify();
+    }
+
+    void giveBack() {
+        idleCount.incrementAndGet();
+        activeCount.decrementAndGet();
+    }
+
+    void recycleIdleItems(Consumer<Connection> recycleHandler,
+                          Predicate<ProxyConnection> needRecycle,
+                          Supplier<Boolean> needStop) {
+        poolListLock.readLock().lock();
+
+        try {
+            for (ThreadLocalPool pool : localPools) {
                 if (needStop.get()) {
                     break;
                 }
 
-                if (needRecycle.test(node.item)) {
-                    recycleHandler.accept(node.item);
-                    Node next = node.next;
-                    destroyIdle(node);
-                    node = next;
-                } else {
-                    node = node.next;
-                }
+                pool.recycle(conn -> {
+                    recycleHandler.accept(conn);
+                    idleCount.decrementAndGet();
+                    decrementTotalCountAndNotify();
+                }, needRecycle, needStop);
             }
         } finally {
-            idleAndEmptyLock.unlock();
+            poolListLock.readLock().unlock();
         }
     }
 
-    private void destroyIdle(Node idle) {
-        --idleCount;
-        move(idle, emptyHead);
-    }
-
-    private boolean noIdleOrEmptyNode() {
-        return idleHead.next == null && emptyHead.next == null;
-    }
-
-    public List<E> listActiveItems() {
-        List<E> items = new ArrayList<>(activeCount);
-
-        activeLock.lock();
-
-        try {
-            Node node = activeHead.next;
-            while (node != null) {
-                items.add(node.item);
-                node = node.next;
-            }
-
-            return items;
-        } finally {
-            activeLock.unlock();
+    void destroyAll(Consumer<ProxyConnection> handler) {
+        poolListLock.writeLock().lock();
+        for (ThreadLocalPool pool : localPools) {
+            pool.destroy(handler);
         }
+        localPools.clear();
+        poolListLock.writeLock().unlock();
+
+        idleCount.set(0);
+        activeCount.set(0);
+        totalCount.set(0);
+
+        fullCondition.signalAll();
     }
 
-    public void destroyAll(Consumer<E> handler) {
-        idleAndEmptyLock.lock();
-        destroyAll(idleHead.next, handler);
-        idleCount = 0;
-        noIdleOrEmptyNodeCondition.signalAll();
-        idleAndEmptyLock.unlock();
-
-        activeLock.lock();
-        destroyAll(activeHead.next, handler);
-        activeCount = 0;
-        activeLock.unlock();
+    void destroyActive(Node active) {
+        ThreadLocalPool pool = poolThreadLocal.get();
+        pool.removeConnection(active);
+        activeCount.decrementAndGet();
+        decrementTotalCountAndNotify();
     }
 
-    private void destroyAll(Node first, Consumer<E> handler) {
-        if (first != null) {
-            Node last = destroyAllReturnLast(first, handler);
-            Node firstEmpty = emptyHead.next;
-            emptyHead.next = first;
-            first.prev = emptyHead;
-            last.next = firstEmpty;
-            if (firstEmpty != null) {
-                firstEmpty.prev = last;
-            }
-        }
-    }
-
-    private Node destroyAllReturnLast(Node node, Consumer<E> handler) {
-        Node last = null;
-
-        while (node != null) {
-            handler.accept(node.item);
-            last = node;
-            node = node.next;
-        }
-
-        return last;
-    }
-
-    public void destroyActive(Node active, Consumer<E> handler) {
-        idleAndEmptyLock.lock();
-
-        try {
-            boolean empty = noIdleOrEmptyNode();
-
-            activeLock.lock();
-            E item = active.item;
-            --activeCount;
-            move(active, emptyHead);
-            handler.accept(item);
-            activeLock.unlock();
-
-            if (empty) {
-                signalNotEmpty();
-            }
-        } finally {
-            idleAndEmptyLock.unlock();
-        }
-    }
-
-    private void signalNotEmpty() {
-        idleAndEmptyLock.lock();
-        try {
-            noIdleOrEmptyNodeCondition.signal();
-        } finally {
-            idleAndEmptyLock.unlock();
-        }
-    }
-
-    public Pair<NodeType, Node> tryTakeIdleOrEmptyNode(long timeoutMs, Consumer<Long> waitHandler) {
-        long nanos = TimeUnit.MICROSECONDS.toNanos(timeoutMs);
-
-        idleAndEmptyLock.lock();
-
-        while (noIdleOrEmptyNode()) {
-            if (nanos <= 0) {
-                idleAndEmptyLock.unlock();
-                return null;
-            }
-
+    private void decrementTotalCountAndNotify() {
+        if (totalCount.decrementAndGet() == max - 1) {
+            fullLock.lock();
             try {
-                long remaining = noIdleOrEmptyNodeCondition.awaitNanos(nanos);
-                waitHandler.accept(nanos - remaining);
-                nanos = remaining;
-            } catch (Throwable e) {
-                // just return and retry
-                idleAndEmptyLock.unlock();
-                return null;
+                fullCondition.signal();
+            } finally {
+                fullLock.unlock();
             }
         }
-
-        Node idle = idleHead.next;
-
-        if (idle != null) {
-            activeLock.lock();
-            --idleCount;
-            ++activeCount;
-            move(idle, activeHead);
-            activeLock.unlock();
-            idleAndEmptyLock.unlock();
-            return new Pair<>(NodeType.IDLE, idle);
-        } else {
-            Node emptyNode = remove(emptyHead.next);
-            idleAndEmptyLock.unlock();
-            return new Pair<>(NodeType.EMPTY, emptyNode);
-        }
     }
 
-    // move active node to idle list
-    public void giveBack(Node active) {
-        idleAndEmptyLock.lock();
-
-        try {
-            boolean empty = noIdleOrEmptyNode();
-
-            activeLock.lock();
-            ++idleCount;
-            --activeCount;
-            move(active, idleHead);
-            activeLock.unlock();
-
-            if (empty) {
-                signalNotEmpty();
-            }
-        } finally {
-            idleAndEmptyLock.unlock();
-        }
-    }
-
-    public void pushToActive(Node node) {
-        activeLock.lock();
-        insertAfter(node, activeHead);
-        ++activeCount;
-        activeLock.unlock();
-    }
-
-    private void move(Node movingNode, Node toNode) {
-        remove(movingNode);
-        insertAfter(movingNode, toNode);
-    }
-
-    private Node remove(Node node) {
-        if (node.next != null) {
-            node.next.prev = node.prev;
-        }
-        if (node.prev != null) {
-            node.prev.next = node.next;
-        }
-        return node;
-    }
-
-    private void insertAfter(Node node, Node to) {
-        Node n = to.next;
-        to.next = node;
-        node.prev = to;
-        node.next = n;
-        if (n != null) {
-            n.prev = node;
-        }
+    void addNewConnection(ProxyConnection connection) {
+        ThreadLocalPool pool = poolThreadLocal.get();
+        pool.addNewConnection(new Node(connection));
+        activeCount.incrementAndGet();
     }
 }

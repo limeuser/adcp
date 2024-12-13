@@ -17,13 +17,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class AdcpPool implements AdcpMetrics {
-    private final Pool<ProxyConnection> pool;
+    private final Pool pool;
 
     private final DataSource dataSource;
     private final AdcpPoolConfig config;
     private final AdcpMonitor monitor;
 
     private volatile boolean closed;
+    private final TimerTask recycleTask;
 
     private final AtomicLong connectionId = new AtomicLong(0);
     private final Map<Thread, Long> pendingThreads = new ConcurrentHashMap<>();
@@ -34,51 +35,48 @@ public class AdcpPool implements AdcpMetrics {
         this.config = adcpPoolConfig;
         this.dataSource = dataSource;
         this.monitor = monitor;
-        this.pool = new Pool<>(config.getMaxPoolSize());
+        this.pool = new Pool(config.getMaxPoolSize());
+
+        this.recycleTask = new TimerTask() {
+            @Override
+            public void run() {
+                logger.info("idle: {}, active: {}, metrics\n{}", pool.idleCount(), pool.activeCount(), monitor);
+                monitor.reset();
+
+                if (closed || pool.idleCount() <= adcpPoolConfig.getMinIdle() || !pendingThreads.isEmpty()) {
+                    return;
+                }
+
+                long timeoutMs = config.getIdleTimeoutSeconds() * 1000L;
+                long maxLifetime = config.getMaxLifetimeSeconds() * 1000L;
+                long now = System.currentTimeMillis();
+
+                List<Connection> recycledConnections = new ArrayList<>();
+
+                pool.recycleIdleItems(
+                        recycledConnections::add,
+                        (conn) -> !closed && (conn.getIdleMs() >= timeoutMs
+                                || now - conn.getCreatedAt() >= maxLifetime),
+                        () -> closed || pool.idleCount() <= config.getMinIdle() || !pendingThreads.isEmpty());
+
+                if (!recycledConnections.isEmpty()) {
+                    logger.info("recycled {} idle connections", recycledConnections.size());
+                }
+
+                recycledConnections.forEach(AdcpPool::closeJdbcConnection);
+            }
+        };
 
         Timer timer = new Timer("connection-recycle", true);
-        timer.schedule(
-                new TimerTask() {
-                    @Override
-                    public void run() {
-                        logger.info("idle: {}, active: {}, metrics\n{}", pool.idleCount(), pool.activeCount(), monitor);
-                        monitor.reset();
-
-                        if (pool.idleCount() <= adcpPoolConfig.getMinIdle()) {
-                            return;
-                        }
-                        if (!pendingThreads.isEmpty()) {
-                            return;
-                        }
-
-                        long timeoutMs = config.getIdleTimeoutSeconds() * 1000L;
-                        long maxLifetime = config.getMaxLifetimeSeconds() * 1000L;
-                        long now = System.currentTimeMillis();
-
-                        List<Connection> recycledConnections = new ArrayList<>();
-
-                        pool.recycleIdleItems(
-                                proxy -> {
-                                    recycledConnections.add(proxy.rawConnection());
-                                    proxy.reset();
-                                },
-                                (conn) -> conn.getIdleMs() >= timeoutMs
-                                        || now - conn.getCreatedAt() >= maxLifetime,
-                                () -> pool.idleCount() <= config.getMinIdle() || !pendingThreads.isEmpty());
-
-                        if (!recycledConnections.isEmpty()) {
-                            logger.info("recycled {} idle connections", recycledConnections.size());
-                        }
-
-                        recycledConnections.forEach(AdcpPool::closeJdbcConnection);
-                    }
-                },
+        timer.schedule(this.recycleTask,
                 TimeUnit.SECONDS.toMillis(config.getRecyclePeriodSeconds()),
                 TimeUnit.SECONDS.toMillis(config.getRecyclePeriodSeconds()));
     }
 
     public void shutdown() {
         closed = true;
+
+        recycleTask.cancel();
 
         pool.destroyAll(connection -> {
             try {
@@ -88,14 +86,12 @@ public class AdcpPool implements AdcpMetrics {
             }
         });
 
+        pendingThreads.clear();
+
         monitor.close();
     }
 
     public ProxyConnection borrow() throws SQLException {
-        if (closed) {
-            throw new RuntimeException("adcp pool is already close");
-        }
-
         long spend = 0;
         long startTime = System.currentTimeMillis();
         long endTime = startTime;
@@ -104,33 +100,14 @@ public class AdcpPool implements AdcpMetrics {
         pendingThreads.put(Thread.currentThread(), startTime);
 
         while (spend <= timeout) {
-            Pair<Pool.NodeType, Pool<ProxyConnection>.Node> result = pool.tryTakeIdleOrEmptyNode(
-                    timeout - spend,
-                    waitNanos -> monitor.recordWait(waitNanos / 1000));
+            if (closed) {
+                throw new RuntimeException("adcp pool is already close");
+            }
 
-            if (result != null && result.left == Pool.NodeType.EMPTY) {
-                Pool<ProxyConnection>.Node emptyNode = result.right;
-                try {
-                    // if timeout, just throw SocketTimeoutException, don't retry
-                    ProxyConnection proxy = createFromRawConnection(emptyNode);
-                    endTime = System.currentTimeMillis();
-                    spend = endTime - startTime;
-                    monitor.recordConnectionAcquiredMs(spend);
-                    return proxy;
-                } catch (Throwable e) {
-                    monitor.recordConnectionCreateError();
+            Node borrowed = pool.borrow();
 
-                    logger.error(
-                            "create raw jdbc connection exception: {}, idle: {}, active: {}\nmetrics\n{}",
-                            e.getMessage(),
-                            pool.idleCount(),
-                            pool.activeCount(),
-                            monitor);
-
-                    throw e;
-                }
-            } else if (result != null && result.left == Pool.NodeType.IDLE) {
-                ProxyConnection proxy = result.right.item;
+            if (borrowed != null) {
+                ProxyConnection proxy = borrowed.item;
                 Connection connection = proxy.rawConnection();
 
                 boolean isValid;
@@ -145,18 +122,42 @@ public class AdcpPool implements AdcpMetrics {
                 }
 
                 if (isValid) {
-                    proxy.setUsingBy(Thread.currentThread());
                     pendingThreads.remove(Thread.currentThread());
                     endTime = System.currentTimeMillis();
                     spend = endTime - startTime;
                     monitor.recordConnectionAcquiredMs(spend);
                     return proxy;
                 } else {
-                    pool.destroyActive(result.right, ProxyConnection::reset);
+                    pool.destroyActive(borrowed);
                     closeJdbcConnection(connection);
                     monitor.recordInvalidConnection();
 
                     logger.warn("jdbc connection {} is invalid, close it", proxy);
+                }
+            }
+
+            if (pool.tryAddConnection(
+                    timeout - spend,
+                    waitNanos -> monitor.recordWait(waitNanos / 1000))) {
+                try {
+                    // if timeout, just throw SocketTimeoutException, don't retry
+                    ProxyConnection proxy = createFromRawConnection();
+                    endTime = System.currentTimeMillis();
+                    spend = endTime - startTime;
+                    monitor.recordConnectionAcquiredMs(spend);
+                    return proxy;
+                } catch (Throwable e) {
+                    pool.failedAddConnection();
+                    monitor.recordConnectionCreateError();
+
+                    logger.error(
+                            "create raw jdbc connection exception: {}, idle: {}, active: {}\nmetrics\n{}",
+                            e.getMessage(),
+                            pool.idleCount(),
+                            pool.activeCount(),
+                            monitor);
+
+                    throw e;
                 }
             }
 
@@ -176,51 +177,48 @@ public class AdcpPool implements AdcpMetrics {
                 .append(", idle: ").append(pool.idleCount())
                 .append("\nmetrics\n").append(monitor)
                 .append("\nusing connections\n");
+//
+//        List<ProxyConnection> activeConnections = pool.listActiveItems();
+//        activeConnections.forEach(connection -> {
+//            builder.append("thread ").append(connection.getUsingThread().getName())
+//                    .append(" used connection ").append(connection)
+//                    .append(" for ").append(endTime - connection.getStartUsingTime()).append(" ms\n");
+//        });
 
-        List<ProxyConnection> activeConnections = pool.listActiveItems();
-        activeConnections.forEach(connection -> {
-            builder.append("thread ").append(connection.getUsingThread().getName())
-                    .append(" used connection ").append(connection)
-                    .append(" for ").append(endTime - connection.getStartUsingTime()).append(" ms\n");
-        });
+        if (!pendingThreads.isEmpty()) {
+            builder.append("\npending threads\n");
 
-        builder.append("\npending threads\n");
-
-        pendingThreads.forEach((thread, time) -> builder
-                .append(thread.getName())
-                .append(" wait ")
-                .append(endTime - time)
-                .append(" ms\n"));
+            pendingThreads.forEach((thread, time) -> builder
+                    .append(thread.getName())
+                    .append(" wait ")
+                    .append(endTime - time)
+                    .append(" ms\n"));
+        }
 
         return builder.toString();
     }
 
-    private ProxyConnection createFromRawConnection(Pool<ProxyConnection>.Node activeNode) throws SQLException {
+    private ProxyConnection createFromRawConnection() throws SQLException {
         long start = System.currentTimeMillis();
         Connection connection = dataSource.getConnection();
         long spend = System.currentTimeMillis() - start;
 
         monitor.recordConnectionCreatedMs(spend);
 
-        if (activeNode.item == null) {
-            activeNode.item = new ProxyConnection(
-                    connectionId.incrementAndGet(),
-                    Thread.currentThread(),
-                    connection,
-                    () -> activeToIdle(activeNode));
-        } else {
-            activeNode.item.useNewRawConnection(Thread.currentThread(), connection, () -> activeToIdle(activeNode));
-        }
+        ProxyConnection proxyConnection = new ProxyConnection(
+                connectionId.incrementAndGet(),
+                connection,
+                this::activeToIdle);
 
-        pool.pushToActive(activeNode);
+        pool.addNewConnection(proxyConnection);
 
         if (spend > 5000) {
-            logger.warn("created new jdbc connection: {} spend {}", activeNode.item, spend);
+            logger.warn("created new jdbc connection: {} spend {}", proxyConnection, spend);
         } else {
-            logger.debug("created new jdbc connection: {} spend {}", activeNode.item, spend);
+            logger.info("created new jdbc connection: {} spend {}", proxyConnection, spend);
         }
 
-        return activeNode.item;
+        return proxyConnection;
     }
 
     private static void closeJdbcConnection(Connection connection) {
@@ -231,16 +229,14 @@ public class AdcpPool implements AdcpMetrics {
         }
     }
 
-    private void activeToIdle(Pool<ProxyConnection>.Node activeNode) {
-        ProxyConnection connection = activeNode.item;
+    private void activeToIdle(ProxyConnection proxyConnection) {
+        pool.giveBack();
 
-        pool.giveBack(activeNode);
-
-        long usedTime = connection.getUsedTime();
+        long usedTime = proxyConnection.getUsedTime();
         monitor.recordConnectionUsageMs(usedTime);
 
         if (usedTime > config.getLeakDetectionThresholdSeconds() * 1000L) {
-            logger.warn("connection {} used for {} seconds", connection, usedTime / 1000);
+            logger.warn("connection {} used for {} seconds", proxyConnection, usedTime / 1000);
         }
     }
 
